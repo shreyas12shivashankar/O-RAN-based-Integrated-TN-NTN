@@ -1,0 +1,52 @@
+import numpy as np
+import src.constants as const
+from src.topology import get_hexagonal_bs, get_random_users
+from src.system_model import (
+    distance_3D, 
+    path_loss, 
+    free_space_path_loss,
+    channel_coefficient,
+    sinr,
+    rate,
+    error_probability    
+)
+
+def availability_with_risks(radius=2000, n_users=100, risk_profile="GBS_Failure"):
+    # Evaluates baseline primary availability under different simulated network risk profiles.
+    
+    bs_coords = get_hexagonal_bs(radius=radius)
+    ue_coords = get_random_users(n=n_users, area_range=5000)
+    
+    epsilon_b = 10**(-6)   # Backhaul error probability 
+    reliability_target = 0.99999  # 99.999% URLLC Target
+    
+
+    for ue_id, ue_pos in enumerate(ue_coords):
+    # Calculate base wireless link reliability
+            
+        # Apply Risk Modifiers based on user profile selection
+        if risk_profile == "GBS_Failure":
+            # Increased error probability for users connected to the failed BS
+                
+        elif risk_profile == "High_Interference":
+            # For users at cell edges facing high interference.
+            
+        elif risk_profile == "Weather_Hazard":
+            
+
+
+if __name__ == "__main__":
+    # Test out the "GBS_Failure" risk profile to see how many users are affected when one base station goes down
+    CURRENT_TEST = "GBS_Failure"
+    
+    df_results = availability_with_risks(risk_profile=CURRENT_TEST)
+    
+    # Filter out and list only users who are affected
+    df_affected = df_results[df_results["Requires_Backup"] == True]
+    
+    print(df_affected.to_string(index=False))
+    
+    print(f"Total users in Network : {len(df_results)}")
+    print(f"Safe users : {len(df_results) - len(df_affected)}")
+    print(f"Affected users : {len(df_affected)}")
+    
