@@ -2,9 +2,9 @@ import numpy as np
 import pandas as pd
     
 def generate_bs_failure_scenario(total_users=100, total_gbs=7):
-    # Generates a network topology with 50% UEs affected by one out of two BS failure.
-    failed_gbs = ["GBS_0", "GBS_1", "GBS_2", "GBS_3"] 
-    active_gbs = ["GBS_4", "GBS_5", "GBS_6"]
+    # Generates a network topology with 50% UEs affected by BS failures.
+    failed_gbs = ["GBS_0", "GBS_1", "GBS_2"] 
+    active_gbs = ["GBS_3", "GBS_4", "GBS_5", "GBS_6"]
     
     users = []
 

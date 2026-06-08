@@ -24,6 +24,8 @@ TX_POWER_AV = 23        # Aerial vehicle Tx power
 TX_POWER_GBS_HAP = 46   # Ground base station / HAP Tx power
 TX_POWER_LEO = 50       # LEO satellite Tx power
 
+# Modulation factor (16-QAM)
+MODULATION_M = 16
 
 # Network toplogy parameters
 NUM_GBS = 7             # Number of ground base stations
@@ -31,3 +33,9 @@ AREA_SQ_KM = 100        # Total network service area in square kilometers
 
 ALTITUDE_HAP = 20000    # 20 Km
 ALTITUDE_LEO = 110000   # 110 Km
+
+# # Antenna Gains (dBi) from Section II (Equation 4)
+# GAIN_LEO = 30
+# GAIN_HAP = 15
+# GAIN_GBS = 15
+# GAIN_UE = 0
