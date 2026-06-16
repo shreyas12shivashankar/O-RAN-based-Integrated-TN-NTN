@@ -48,14 +48,12 @@ def run_integrated_simulation(total_backup_rbs_per_node = 20):
         is_stranded = ue_id in affected_ue_ids
         primary_bs_risk = user_to_failed_bs_map.get(ue_id, "None")
         
-        # ---------------------------------------------------------
-        # 1. NTN Calculations (Pure AWGN Channel: is_ntn=True)
-        # ---------------------------------------------------------
+        # 1. NTN Calculations 
         
-        # --- HAP ---
+        # HAP
         dist_hap = distance_3D(hap_coord, ue_pos)
         pl_hap_db = free_space_path_loss(dist_hap, const.CARRIER_FREQ_GHZ)
-        h_hap = channel_coefficient(antenna_gain=1.0, path_loss_db=pl_hap_db, is_ntn=True)
+        h_hap = channel_coefficient(antenna_gain_db=32.0, path_loss_db=pl_hap_db, k_factor_db=15.0)
         
         snr_hap_linear = sinr(p_hap_watts, np.abs(h_hap)**2, interference_power=0, 
                               noise_density=noise_density_watts, bandwidth=const.BANDWIDTH_HZ)
@@ -66,10 +64,10 @@ def run_integrated_simulation(total_backup_rbs_per_node = 20):
                 if u["ue_id"] == ue_id:
                     u["a_in_HAP"] = (1 - eps_hap) * (1 - const.BACKHAUL_ERROR_PROB)
         
-        # --- LEO ---
+        # LEO 
         dist_leo = distance_3D(leo_coord, ue_pos)
         pl_leo_db = free_space_path_loss(dist_leo, const.CARRIER_FREQ_GHZ)
-        h_leo = channel_coefficient(antenna_gain=1.0, path_loss_db=pl_leo_db, is_ntn=True)
+        h_leo = channel_coefficient(antenna_gain_db=38.0, path_loss_db=pl_leo_db, k_factor_db=15.0)
         
         snr_leo_linear = sinr(p_leo_watts, np.abs(h_leo)**2, interference_power=0, 
                               noise_density=noise_density_watts, bandwidth=const.BANDWIDTH_HZ)
@@ -86,9 +84,7 @@ def run_integrated_simulation(total_backup_rbs_per_node = 20):
             10 * np.log10(p_leo_watts * np.abs(h_leo)**2) + 30
         )
 
-        # ---------------------------------------------------------
         # 2. Terrestrial Calculations (3GPP TR 38.901 - Dynamic K)
-        # ---------------------------------------------------------
         active_rx_powers_watts = {}
         active_h_sq = {}
         
@@ -100,14 +96,14 @@ def run_integrated_simulation(total_backup_rbs_per_node = 20):
                 
                 # 3GPP UMa LOS Distribution: Mean=9 dB, Std=3.5 dB
                 k_db = np.random.normal(9.0, 3.5)
-                k_linear = 10 ** (k_db / 10)
                 
-                h_gbs = channel_coefficient(antenna_gain=1.0, path_loss_db=pl_gbs_db, 
-                                            rician_factor_k_linear=k_linear, is_ntn=False)
+                # Evaluate terrestrial link (GBS antenna gain = 16.84 dBi)
+                h_gbs_mag = channel_coefficient(antenna_gain_db=16.84, path_loss_db=pl_gbs_db, 
+                                                k_factor_db=k_db)
                 
-                rx_power_w = p_gbs_watts * np.abs(h_gbs)**2
+                rx_power_w = p_gbs_watts * (h_gbs_mag**2)
                 active_rx_powers_watts[gbs_name] = rx_power_w
-                active_h_sq[gbs_name] = np.abs(h_gbs)**2
+                active_h_sq[gbs_name] = (h_gbs_mag**2)
 
         best_sinr_linear = 0
 
@@ -132,9 +128,8 @@ def run_integrated_simulation(total_backup_rbs_per_node = 20):
             if rx_dbm > max_rx_power_dbm:
                 max_rx_power_dbm = rx_dbm
 
-        # ---------------------------------------------------------
-        # 3. Capacity Assignment (Leonhard Point 3)
-        # ---------------------------------------------------------
+        # 3. Capacity Assignment 
+        
         ue_capacity_mbps = 0.0
         
         if is_stranded:
@@ -178,18 +173,16 @@ def run_integrated_simulation(total_backup_rbs_per_node = 20):
     # --- Step 5: Print Consolidated Output Summary ---
     system_sum_capacity = df['Capacity_Mbps'].sum()
 
-    print(f"\n========= SIMULATION RESULTS: {total_backup_rbs_per_node} RBs PER NODE =========")
-    print("--- 3GPP Channel Profiles ---")
+    print(f"\nSIMULATION RESULTS: {total_backup_rbs_per_node} RBs PER NODE")
     print("Terrestrial : UMa Stochastic Fading (μ=9dB, σ=3.5dB)")
-    print("NTN Nodes   : Ideal AWGN / LOS (is_ntn=True)")
     
-    print("\n--- Capacity & Telemetry ---")
+    print("\nCapacity & Telemetry ")
     print(f"Total Network Users      : {len(df)}")
     print(f"Terrestrial Safe Users   : {len(df[df['Status'] == 'Healthy'])}")
-    print(f"Disaster Victims         : {len(affected_ue_ids)}")
+    print(f"Affected Users           : {len(affected_ue_ids)}")
     print(f"System Sum Capacity      : {system_sum_capacity:.2f} Mbps")
     
-    print("\n--- Recovery Breakdown ---")
+    print("\nRecovery Breakdown ")
     recovered_df = df[df['Status'] == 'Rescued']
     if not recovered_df.empty:
         print(recovered_df['Final_Connection'].apply(lambda x: str(x).split('_Shared_Pool')[0]).value_counts().to_string())
@@ -197,9 +190,7 @@ def run_integrated_simulation(total_backup_rbs_per_node = 20):
         print("No users recovered.")
         
     print(f"\nNetwork Resilience       : {resilience_pct:.1f}%")
-    print("==================================================================")
-
     return df
 
 if __name__ == "__main__":
-    run_integrated_simulation(total_backup_rbs_per_node = 20)
+    run_integrated_simulation(total_backup_rbs_per_node = 10)

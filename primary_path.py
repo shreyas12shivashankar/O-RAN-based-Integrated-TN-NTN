@@ -3,11 +3,15 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 from src.topology import get_hexagonal_bs, get_random_users, get_ntn_nodes, draw_hexagon
-from src.system_model import distance_3D, path_loss, free_space_path_loss, channel_coefficient, sinr, rate
+from src.system_model import (
+    distance_3D, path_loss, free_space_path_loss, channel_coefficient, sinr, rate, check_transmission_success,
+    GAIN_GBS_DBI, GAIN_HAP_DBI, GAIN_LEO_DBI,
+    K_UMA_DB_MEAN, K_UMA_DB_STD, K_HAP_STATIC, K_LEO_STATIC
+)
 import src.constants as const
 
 def analyze_primary_paths():
-    # --- 1. Setup Network ---
+    # 1. Setup Network 
     bs_coords = get_hexagonal_bs(radius=2000)
     hap_coord, leo_coord = get_ntn_nodes()
     
@@ -30,25 +34,32 @@ def analyze_primary_paths():
 
     results = []
     
-    # --- 2. Calculate Link Budgets & Capacity ---
+    # 2. Calculate Link Budgets & Capacity 
     for ue_id, ue_pos in enumerate(ue_coords):
         link_profiles = {}
 
         # NTN 
-        pl_hap = free_space_path_loss(distance_3D(hap_coord, ue_pos), const.CARRIER_FREQ_GHZ)
-        link_profiles['HAP'] = p_hap_w * np.abs(channel_coefficient(1.0, pl_hap, is_ntn=True))**2
+        pl_hap_db = free_space_path_loss(distance_3D(hap_coord, ue_pos), const.CARRIER_FREQ_GHZ)
+        h_hap_mag = channel_coefficient(antenna_gain_db=GAIN_HAP_DBI, path_loss_db=pl_hap_db, k_factor_db=K_HAP_STATIC)
+        link_profiles['HAP'] = p_hap_w * (h_hap_mag**2)
 
-        pl_leo = free_space_path_loss(distance_3D(leo_coord, ue_pos), const.CARRIER_FREQ_GHZ)
-        link_profiles['LEO'] = p_leo_w * np.abs(channel_coefficient(1.0, pl_leo, is_ntn=True))**2
+        pl_leo_db = free_space_path_loss(distance_3D(leo_coord, ue_pos), const.CARRIER_FREQ_GHZ)
+        h_leo_mag = channel_coefficient(antenna_gain_db=GAIN_LEO_DBI, path_loss_db=pl_leo_db, k_factor_db=K_LEO_STATIC)
+        link_profiles['LEO'] = p_leo_w * (h_leo_mag**2)
 
-        # Terrestrial (Dynamic Fading)
+        # Terrestrial (Dynamic UMa Fading)
         for bs_id, bs_pos in enumerate(bs_coords):
-            pl_gbs = path_loss(distance_3D(bs_pos, ue_pos), const.CARRIER_FREQ_GHZ)
-            k_linear = 10 ** (np.random.normal(9.0, 3.5) / 10)
-            h_gbs = channel_coefficient(1.0, pl_gbs, rician_factor_k_linear=k_linear, is_ntn=False)
-            link_profiles[f'GBS_{bs_id}'] = p_gbs_w * np.abs(h_gbs)**2
-
-        # Determine Primary RU (Strongest Signal)
+            pl_gbs_db = path_loss(distance_3D(bs_pos, ue_pos), const.CARRIER_FREQ_GHZ)
+            
+            # 1. Draw dynamic K in dB using Imported Constants
+            k_db = np.random.normal(K_UMA_DB_MEAN, K_UMA_DB_STD)
+            
+            # 2. Evaluate terrestrial link using Imported GBS Gain Constant
+            h_gbs_mag = channel_coefficient(antenna_gain_db=GAIN_GBS_DBI, path_loss_db=pl_gbs_db, k_factor_db=k_db)
+            
+            link_profiles[f'GBS_{bs_id}'] = p_gbs_w * (h_gbs_mag**2)
+    
+        # Determine Primary RU (Strongest Signal - Greedy Logic)
         primary_ru = max(link_profiles, key=link_profiles.get)
         max_rx_power_w = link_profiles[primary_ru]
         
@@ -61,31 +72,50 @@ def analyze_primary_paths():
 
         capacity_mbps = rate(const.BANDWIDTH_HZ, sinr_linear) / 1e6
 
+        # Check Transmission Success (URLLC 10 ms threshold)
+        dist_to_primary = distance_3D(node_coordinates[primary_ru], ue_pos)
+        
+        success, delay_ms = check_transmission_success(
+            capacity_mbps=capacity_mbps, 
+            distance_m=dist_to_primary, 
+            packet_size_bytes=32, 
+            max_latency_ms=10.0 
+        )
+
         results.append({
             "UE_ID": f"UE_{ue_id:03d}",
             "Primary_RU": primary_ru,
             "Rx_Power_dBm": round(10 * np.log10(max_rx_power_w) + 30, 2),
-            "Capacity_Mbps": round(capacity_mbps, 2)
+            "Capacity_Mbps": round(capacity_mbps, 2),
+            "Delay_ms": round(delay_ms, 4), # <--- Added delay to table
+            "Tx_Success": "Pass" if success else "Drop" # <--- Added success status
         })
 
-    # --- 3. Generate Tabular Output ---
+    # 3. Generate Tabular Output
     df = pd.DataFrame(results)
     
     # Force Pandas to print all 100 rows for the report
     pd.set_option('display.max_rows', None)
     
-    print("\n" + "="*60)
     print("USER EQUIPMENT PRIMARY PATH & CAPACITY REPORT")
-    print("="*60)
     print(df.to_string(index=False)) 
-    print("="*60)
+        
+    # --- Connection Summary ---
+    hap_count = len(df[df['Primary_RU'] == 'HAP'])
+    leo_count = len(df[df['Primary_RU'] == 'LEO'])
+    gbs_count = len(df[df['Primary_RU'].str.startswith('GBS')])
+
+    
+    print("NETWORK CONNECTION SUMMARY")
+    print(f"Total UEs connected to GBS (Terrestrial) : {gbs_count}")
+    print(f"Total UEs connected to HAP (NTN)         : {hap_count}")
+    print(f"Total UEs connected to LEO (NTN)         : {leo_count}")
     
     # Aggregate Sum Capacity
     sum_capacity = df['Capacity_Mbps'].sum()
     print(f"\n[SYSTEM METRIC] Overall Sum Capacity: {sum_capacity:.2f} Mbps")
-    print("="*60)
 
-    # --- 4. Generate Visual Topology Plot ---
+    #  4. Generate Visual Topology Plot 
     fig = plt.figure(figsize=(12, 10))
     ax = fig.add_subplot(111, projection='3d')
 
@@ -106,13 +136,14 @@ def analyze_primary_paths():
         ru_pos = node_coordinates[ru_name]
         
         # Color code the lines based on connection type
-        line_color = 'brown' if 'GBS' in ru_name else 'gray'
-        line_alpha = 0.4 if 'GBS' in ru_name else 0.2
+        line_color = '#1f77b4' if 'GBS' in ru_name else '#ff7f0e'
+        line_alpha = 0.85 if 'GBS' in ru_name else 0.85
+        line_width = 1.2
         
         ax.plot([ue_pos[0], ru_pos[0]], 
                 [ue_pos[1], ru_pos[1]], 
                 [ue_pos[2], ru_pos[2]], 
-                color=line_color, linestyle='-', linewidth=0.5, alpha=line_alpha)
+                color=line_color, linestyle='-', linewidth=line_width, alpha=line_alpha)
 
     ax.set_box_aspect([1, 1, 0.6])
     ax.set_xlabel('X (m)')
@@ -123,9 +154,9 @@ def analyze_primary_paths():
     # Custom legend to include the connection lines
     from matplotlib.lines import Line2D
     handles, labels = ax.get_legend_handles_labels()
-    handles.append(Line2D([0], [0], color='brown', lw=1, alpha=0.6))
+    handles.append(Line2D([0], [0], color='#1f77b4', lw=2, alpha=0.85))
     labels.append('Terrestrial Link')
-    handles.append(Line2D([0], [0], color='gray', lw=1, alpha=0.4))
+    handles.append(Line2D([0], [0], color='#ff7f0e', lw=2, alpha=0.85))
     labels.append('NTN Link')
     ax.legend(handles=handles, labels=labels, loc='upper right')
     

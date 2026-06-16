@@ -33,9 +33,3 @@ AREA_SQ_KM = 100        # Total network service area in square kilometers
 
 ALTITUDE_HAP = 20000    # 20 Km
 ALTITUDE_LEO = 110000   # 110 Km
-
-# # Antenna Gains (dBi) from Section II (Equation 4)
-# GAIN_LEO = 30
-# GAIN_HAP = 15
-# GAIN_GBS = 15
-# GAIN_UE = 0
