@@ -1,127 +1,128 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+from matplotlib.lines import Line2D
 
 from src.topology import get_hexagonal_bs, get_random_users, get_ntn_nodes, draw_hexagon
 from src.system_model import (
-    distance_3D, path_loss, free_space_path_loss, channel_coefficient, sinr, rate, check_transmission_success,
+    distance_3D, path_loss, free_space_path_loss, channel_coefficient, sinr, rate,
     GAIN_GBS_DBI, GAIN_HAP_DBI, GAIN_LEO_DBI,
     K_UMA_DB_MEAN, K_UMA_DB_STD, K_HAP_STATIC, K_LEO_STATIC
 )
 import src.constants as const
 
 def analyze_primary_paths():
+    
     # 1. Setup Network 
-    bs_coords = get_hexagonal_bs(radius=2000)
+    bs_coords = get_hexagonal_bs(radius=const.CELL_RADIUS, num_gbs=const.NUM_GBS)  
     hap_coord, leo_coord = get_ntn_nodes()
     
-    # Create a dictionary to easily map RU names to their 3D coordinates for plotting
-    node_coordinates = {
-        'HAP': hap_coord,
-        'LEO': leo_coord
-    }
-    for bs_id, bs_pos in enumerate(bs_coords):
-        node_coordinates[f'GBS_{bs_id}'] = bs_pos
-
     np.random.seed(42) 
-    ue_coords = get_random_users(n=100)
-
-    # Power in linear Watts
-    noise_density_w = 10 ** ((const.NOISE_SPECTRAL_DENSITY_DBM - 30) / 10)
-    p_hap_w = 10 ** ((const.TX_POWER_GBS_HAP - 30) / 10)
-    p_leo_w = 10 ** ((const.TX_POWER_LEO - 30) / 10)
-    p_gbs_w = 10 ** ((const.TX_POWER_GBS_HAP - 30) / 10)
+    ue_coords = get_random_users(n=const.NUM_UE)
 
     results = []
     
-    # 2. Calculate Link Budgets & Capacity 
-    for ue_id, ue_pos in enumerate(ue_coords):
-        link_profiles = {}
+    # 2. Calculate Link Budgets & Capacity
+    for ue_id in range(len(ue_coords)):
+        ue_pos = ue_coords[ue_id]
 
-        # NTN 
-        pl_hap_db = free_space_path_loss(distance_3D(hap_coord, ue_pos), const.CARRIER_FREQ_GHZ)
-        h_hap_mag = channel_coefficient(antenna_gain_db=GAIN_HAP_DBI, path_loss_db=pl_hap_db, k_factor_db=K_HAP_STATIC)
-        link_profiles['HAP'] = p_hap_w * (h_hap_mag**2)
+        best_ru_name = None
+        max_rx_power_w = 0.0
+        best_is_ntn = False
+        dist_to_primary = 0.0
 
-        pl_leo_db = free_space_path_loss(distance_3D(leo_coord, ue_pos), const.CARRIER_FREQ_GHZ)
-        h_leo_mag = channel_coefficient(antenna_gain_db=GAIN_LEO_DBI, path_loss_db=pl_leo_db, k_factor_db=K_LEO_STATIC)
-        link_profiles['LEO'] = p_leo_w * (h_leo_mag**2)
+        # Evaluate HAP Link
+        dist_hap = distance_3D(hap_coord, ue_pos)
+        pl_hap_db = free_space_path_loss(dist_hap, const.CARRIER_FREQ_GHZ)
+        h_hap_mag = channel_coefficient(GAIN_HAP_DBI, pl_hap_db, K_HAP_STATIC)
+        rx_hap_w = const.TX_POWER_HAP_W * (h_hap_mag**2)
 
-        # Terrestrial (Dynamic UMa Fading)
-        for bs_id, bs_pos in enumerate(bs_coords):
-            pl_gbs_db = path_loss(distance_3D(bs_pos, ue_pos), const.CARRIER_FREQ_GHZ)
+        if rx_hap_w > max_rx_power_w:
+            max_rx_power_w = rx_hap_w
+            best_ru_name = 'HAP'
+            best_is_ntn = True
+            dist_to_primary = dist_hap
+
+        # Evaluate LEO Link
+        dist_leo = distance_3D(leo_coord, ue_pos)
+        pl_leo_db = free_space_path_loss(dist_leo, const.CARRIER_FREQ_GHZ)
+        h_leo_mag = channel_coefficient(GAIN_LEO_DBI, pl_leo_db, K_LEO_STATIC)
+        rx_leo_w = const.TX_POWER_LEO_W * (h_leo_mag**2)
+
+        if rx_leo_w > max_rx_power_w:
+            max_rx_power_w = rx_leo_w
+            best_ru_name = 'LEO'
+            best_is_ntn = True
+            dist_to_primary = dist_leo
+
+        # Evaluate Terrestrial Links (Ground Base Stations)
+        gbs_powers_w = [] # Store all terrestrial powers to calculate interference 
+        
+        for bs_id in range(len(bs_coords)):
+            bs_pos = bs_coords[bs_id]
+            dist_gbs = distance_3D(bs_pos, ue_pos)
             
-            # 1. Draw dynamic K in dB using Imported Constants
+            pl_gbs_db = path_loss(dist_gbs, const.CARRIER_FREQ_GHZ)
             k_db = np.random.normal(K_UMA_DB_MEAN, K_UMA_DB_STD)
+            h_gbs_mag = channel_coefficient(GAIN_GBS_DBI, pl_gbs_db, k_db)
             
-            # 2. Evaluate terrestrial link using Imported GBS Gain Constant
-            h_gbs_mag = channel_coefficient(antenna_gain_db=GAIN_GBS_DBI, path_loss_db=pl_gbs_db, k_factor_db=k_db)
-            
-            link_profiles[f'GBS_{bs_id}'] = p_gbs_w * (h_gbs_mag**2)
-    
-        # Determine Primary RU (Strongest Signal - Greedy Logic)
-        primary_ru = max(link_profiles, key=link_profiles.get)
-        max_rx_power_w = link_profiles[primary_ru]
-        
-        # Calculate SINR and Capacity
-        if primary_ru in ['HAP', 'LEO']:
-            sinr_linear = sinr(1.0, max_rx_power_w, 0, noise_density_w, const.BANDWIDTH_HZ)
+            rx_gbs_w = const.TX_POWER_GBS_W * (h_gbs_mag**2)
+            gbs_powers_w.append(rx_gbs_w)
+
+            # Greedy Logic
+            if rx_gbs_w > max_rx_power_w:
+                max_rx_power_w = rx_gbs_w
+                best_ru_name = f'GBS_{bs_id}'
+                best_is_ntn = False
+                dist_to_primary = dist_gbs
+
+        # Calculate SINR
+        if best_is_ntn:
+            # NTN links are modeled with zero terrestrial interference
+            interference_w = 0.0 
         else:
-            interference_w = sum(p for node, p in link_profiles.items() if node.startswith('GBS_') and node != primary_ru)
-            sinr_linear = sinr(1.0, max_rx_power_w, interference_w, noise_density_w, const.BANDWIDTH_HZ)
+            # Terrestrial interference is the sum of all GBS signals MINUS the one we connected to
+            total_gbs_power = sum(gbs_powers_w)
+            interference_w = total_gbs_power - max_rx_power_w
 
+        sinr_linear = sinr(1.0, max_rx_power_w, interference_w, const.NOISE_SPECTRAL_DENSITY_W, const.BANDWIDTH_HZ)
         capacity_mbps = rate(const.BANDWIDTH_HZ, sinr_linear) / 1e6
-
-        # Check Transmission Success (URLLC 10 ms threshold)
-        dist_to_primary = distance_3D(node_coordinates[primary_ru], ue_pos)
-        
-        success, delay_ms = check_transmission_success(
-            capacity_mbps=capacity_mbps, 
-            distance_m=dist_to_primary, 
-            packet_size_bytes=32, 
-            max_latency_ms=10.0 
-        )
 
         results.append({
             "UE_ID": f"UE_{ue_id:03d}",
-            "Primary_RU": primary_ru,
+            "Primary_RU": best_ru_name,
             "Rx_Power_dBm": round(10 * np.log10(max_rx_power_w) + 30, 2),
-            "Capacity_Mbps": round(capacity_mbps, 2),
-            "Delay_ms": round(delay_ms, 4), # <--- Added delay to table
-            "Tx_Success": "Pass" if success else "Drop" # <--- Added success status
+            "Capacity_Mbps": round(capacity_mbps, 2)
         })
 
     # 3. Generate Tabular Output
     df = pd.DataFrame(results)
-    
-    # Force Pandas to print all 100 rows for the report
     pd.set_option('display.max_rows', None)
     
-    print("USER EQUIPMENT PRIMARY PATH & CAPACITY REPORT")
+    print("\nUSER EQUIPMENT PRIMARY PATH & CAPACITY")
     print(df.to_string(index=False)) 
         
-    # --- Connection Summary ---
+    # Connection Summary 
     hap_count = len(df[df['Primary_RU'] == 'HAP'])
     leo_count = len(df[df['Primary_RU'] == 'LEO'])
     gbs_count = len(df[df['Primary_RU'].str.startswith('GBS')])
-
     
-    print("NETWORK CONNECTION SUMMARY")
+    print("\nNETWORK CONNECTION SUMMARY")
     print(f"Total UEs connected to GBS (Terrestrial) : {gbs_count}")
     print(f"Total UEs connected to HAP (NTN)         : {hap_count}")
     print(f"Total UEs connected to LEO (NTN)         : {leo_count}")
     
-    # Aggregate Sum Capacity
     sum_capacity = df['Capacity_Mbps'].sum()
     print(f"\n[SYSTEM METRIC] Overall Sum Capacity: {sum_capacity:.2f} Mbps")
 
-    #  4. Generate Visual Topology Plot 
+    # 4. Generate Visual Topology Plot
     fig = plt.figure(figsize=(12, 10))
     ax = fig.add_subplot(111, projection='3d')
 
     # Draw hexagonal cells
     for bs in bs_coords:
-        draw_hexagon(ax, bs, radius=2000)
+        draw_hexagon(ax, bs, radius=const.CELL_RADIUS)
 
     # Plot the physical nodes
     ax.scatter(ue_coords[:,0], ue_coords[:,1], ue_coords[:,2], c='red', s=15, label='UE', zorder=5)
@@ -129,15 +130,22 @@ def analyze_primary_paths():
     ax.scatter(hap_coord[0], hap_coord[1], hap_coord[2], c='black', marker='^', s=120, label='HAP', zorder=10)
     ax.scatter(leo_coord[0], leo_coord[1], leo_coord[2], c='green', marker='^', s=120, label='LEO', zorder=10)
 
-    # Draw the Primary Paths (Lines connecting UE to RU)
+    # Draw the Primary Paths
     for ue_id, row in df.iterrows():
         ue_pos = ue_coords[ue_id]
         ru_name = row['Primary_RU']
-        ru_pos = node_coordinates[ru_name]
         
-        # Color code the lines based on connection type
-        line_color = '#1f77b4' if 'GBS' in ru_name else '#ff7f0e'
-        line_alpha = 0.85 if 'GBS' in ru_name else 0.85
+        # Manually extract the coordinates of the chosen RU for the plot
+        if ru_name == 'HAP':
+            ru_pos = hap_coord
+        elif ru_name == 'LEO':
+            ru_pos = leo_coord
+        else:
+            bs_index = int(ru_name.split('_')[1])
+            ru_pos = bs_coords[bs_index]
+        
+        line_color ='#1f77b4' if 'GBS' in ru_name else '#ff7f0e'
+        line_alpha = 0.85 
         line_width = 1.2
         
         ax.plot([ue_pos[0], ru_pos[0]], 
@@ -149,10 +157,9 @@ def analyze_primary_paths():
     ax.set_xlabel('X (m)')
     ax.set_ylabel('Y (m)')
     ax.set_zlabel('Altitude Z (m)')
-    ax.set_title('Network Topology: Primary Path Assignments')
+    ax.set_title('Network Topology: Primary Path Allocation')
     
-    # Custom legend to include the connection lines
-    from matplotlib.lines import Line2D
+    # Custom legend
     handles, labels = ax.get_legend_handles_labels()
     handles.append(Line2D([0], [0], color='#1f77b4', lw=2, alpha=0.85))
     labels.append('Terrestrial Link')

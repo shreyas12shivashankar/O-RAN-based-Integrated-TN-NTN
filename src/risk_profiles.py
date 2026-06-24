@@ -1,33 +1,30 @@
 import numpy as np
-import pandas as pd
-    
-def generate_bs_failure_scenario(total_users=100, total_gbs=7):
-    # Generates a network topology with 50% UEs affected by BS failures.
-    failed_gbs = ["GBS_0", "GBS_1", "GBS_2"] 
-    active_gbs = ["GBS_3", "GBS_4", "GBS_5", "GBS_6"]
-    
-    users = []
+from src.topology import get_hexagonal_bs, get_random_users
 
-    # Force exactly 50 users into the failed and 50 into the active groups.
-    for i in range(total_users):
-        if i < 50:
-            primary_gbs = failed_gbs[i % len(failed_gbs)] 
-        else:
-            primary_gbs = active_gbs[i % len(active_gbs)] 
-            
-        users.append({
-            "ue_id": i,
-            "primary_gbs": primary_gbs,
-            "status": "Healthy"
-        })
+def generate_bs_failure_scenario(total_users, total_bs, failed_bs_list):
+    """
+    Identifies which users are geographically affected by the failing base stations.
+    """
+    # Generate the exact same deterministic topology as the main simulation
+    bs_coords = get_hexagonal_bs(radius=2000)
+    
+    # Use the same seed as the main simulation to ensure user coordinates match exactly
+    np.random.seed(42) 
+    ue_coords = get_random_users(n=total_users)
     
     affected_users = []
-
-    for u in users:
-       if u["primary_gbs"] in failed_gbs:
-           affected_users.append(u)
     
-    for user in affected_users:
-        user["status"] = f"Stranded {user['primary_gbs']} Failed"
+    for ue_id, ue_pos in enumerate(ue_coords):
+        # Find the geographically closest Ground Base Station
+        distances = [np.linalg.norm(ue_pos - bs_pos) for bs_pos in bs_coords]
+        closest_bs_idx = np.argmin(distances)
+        primary_gbs = f"GBS_{closest_bs_idx}"
+        
+        # If their primary GBS is in the failure list, add them to the affected pool
+        if primary_gbs in failed_bs_list:
+            affected_users.append({
+                "ue_id": ue_id,
+                "primary_gbs": primary_gbs
+            })
             
     return affected_users
