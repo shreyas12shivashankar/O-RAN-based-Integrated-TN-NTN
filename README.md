@@ -1,1 +1,1 @@
-# Integrated-O-RAN-NTN# Research Paper Implementation
+# O-RAN based Integrated TN-NTN # Research Paper Implementation
