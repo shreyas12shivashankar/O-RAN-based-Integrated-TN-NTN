@@ -1,57 +1,67 @@
+
 # import numpy as np
 
 # def allocate_backup_paths(affected_users, active_nodes, rb_distribution=None):
-    
-#     # Initialize the backup pool for every active node
+#     """
+#     Matrix-based Risk-Aware Backup Path Allocator with Strict Hard Capacity limits.
+#     """
+#     if rb_distribution is None:
+#         rb_distribution = {node: 10 for node in active_nodes}
+        
+#     # Initialize the backup pool trackers
 #     backup_paths = {
-#         node_name: {"r_i": rb_distribution, "users": [], "failed_bs_in_path": []}
+#         node_name: {
+#             "r_i": rb_distribution.get(node_name, 0), 
+#             "users": [], 
+#             "failed_bs_in_path": []
+#         }
 #         for node_name in active_nodes
 #     }
     
+#     # Build the Availability Matrix (Preference Ranking)
+#     user_preferences = {}
+#     for user in affected_users:
+#         prefs = []
+#         for node in active_nodes:
+#             a_in = user.get(f"a_in_{node}", 0)
+#             if a_in > 0: 
+#                 prefs.append((node, a_in))
+                
+#         # Sort highest availability first
+#         prefs.sort(key=lambda x: x[1], reverse=True)
+#         user_preferences[user["ue_id"]] = prefs
+
 #     recovered_users = 0
 #     dropped_users = 0
 
+#     # Strict Capacity-Aware Allocation
 #     for user in affected_users:
-#         user_risk = user["primary_gbs"]  
-
-#         best_path_name = None
-#         best_b_in = -1
-
-#         for path_name, path_data in backup_paths.items():
+#         ue_id = user["ue_id"]
+#         prefs = user_preferences.get(ue_id, [])
+        
+#         allocated = False
+#         for target_node, a_in in prefs:
+#             current_load = len(backup_paths[target_node]["users"])
+#             max_rbs = backup_paths[target_node]["r_i"]
             
-#             # Fetch raw availability. If 0, the link failed the physical 0.99999 check.
-#             a_in = user.get(f"a_in_{path_name}", 0) 
-#             if a_in == 0:
-#                 continue 
+#             # STRICT HARD CAP: Only allocate if there is an empty RB available
+#             if current_load < max_rbs:
+#                 backup_paths[target_node]["users"].append(ue_id)
+#                 backup_paths[target_node]["failed_bs_in_path"].append(user.get("primary_gbs", "Unknown"))
                 
-#             # Evaluate proposed capacity
-#             proposed_load_Ni = len(path_data["users"]) + 1  #How many users are already assigned  to this backup node + current useer
-            
-#             # Hard Capacity enforcement : Discard path if node has exhausted all RBs
-#             if proposed_load_Ni > path_data["r_i"]:
-#                 continue
+#                 # Commit the connection
+#                 user["final_connection"] = f"{target_node}_Shared_Pool"
+#                 user["shareability"] = 1.0  # Since 1 user takes exactly 1 RB, phi remains 1.0
+#                 user["b_in"] = a_in
                 
-#             # Eq 12: Shareability factor
-#             phi_i = path_data["r_i"] / proposed_load_Ni #  calculates shareability factor
-#             shareability_factor = min(1.0, phi_i)  # Capping shareability to 1.0
-            
-#             # Eq 13: Calculate E2E Shared Availability
-#             b_in = a_in * shareability_factor
-            
-#             # Eq 14: Select the backup path that maximizes E2E availability
-#             if b_in > best_b_in:
-#                 best_b_in = b_in
-#                 best_path_name = path_name
-                 
-#         if best_path_name is not None:
-#             # Commit allocation to the optimal path
-#             backup_paths[best_path_name]["users"].append(user["ue_id"])
-#             backup_paths[best_path_name]["failed_bs_in_path"].append(user_risk)
-#             user["final_connection"] = f"{best_path_name}_Shared_Pool"
-#             recovered_users += 1
-#         else:
-#             # User drops if all paths are physically invalid or at max RB capacity
+#                 allocated = True
+#                 recovered_users += 1
+#                 break
+        
+#         # If all preferred nodes were completely full, the user is immediately dropped
+#         if not allocated:
 #             user["final_connection"] = "Dropped"
+#             user["shareability"] = 0.0
 #             dropped_users += 1
 
 #     total_affected = len(affected_users)
@@ -59,73 +69,57 @@
 
 #     return resilience_percentage, backup_paths, affected_users
 
-
-import numpy as np
-
-def allocate_backup_paths(affected_users, active_nodes, rb_distribution=None):
+def allocate_backup_paths(affected_users, active_nodes, failed_bs_indices, fixed_rb_value=10, verbose=False):
     """
-    Matrix-based Risk-Aware Backup Path Allocator with Strict Hard Capacity limits.
+    Executes the Risk-Aware Backup Path Allocation (Algorithm 1).
+    Groups users by risk, calculates shareability, and dynamically offloads users.
     """
-    if rb_distribution is None:
-        rb_distribution = {node: 10 for node in active_nodes}
-        
-    # Initialize the backup pool trackers
-    backup_paths = {
-        node_name: {
-            "r_i": rb_distribution.get(node_name, 0), 
-            "users": [], 
-            "failed_bs_in_path": []
-        }
-        for node_name in active_nodes
-    }
-    
-    # Build the Availability Matrix (Preference Ranking)
-    user_preferences = {}
-    for user in affected_users:
-        prefs = []
-        for node in active_nodes:
-            a_in = user.get(f"a_in_{node}", 0)
-            if a_in > 0: 
-                prefs.append((node, a_in))
-                
-        # Sort highest availability first
-        prefs.sort(key=lambda x: x[1], reverse=True)
-        user_preferences[user["ue_id"]] = prefs
+    if not affected_users:
+        return 0, {}
 
-    recovered_users = 0
-    dropped_users = 0
-
-    # Strict Capacity-Aware Allocation
+    # 1. Risk-Disjoint Grouping (Group by the specific GBS that failed)
+    groups = {bs_idx: [] for bs_idx in failed_bs_indices}
     for user in affected_users:
-        ue_id = user["ue_id"]
-        prefs = user_preferences.get(ue_id, [])
-        
-        allocated = False
-        for target_node, a_in in prefs:
-            current_load = len(backup_paths[target_node]["users"])
-            max_rbs = backup_paths[target_node]["r_i"]
+        if user["primary_gbs"] in groups:
+            groups[user["primary_gbs"]].append(user)
             
-            # STRICT HARD CAP: Only allocate if there is an empty RB available
-            if current_load < max_rbs:
-                backup_paths[target_node]["users"].append(ue_id)
-                backup_paths[target_node]["failed_bs_in_path"].append(user.get("primary_gbs", "Unknown"))
-                
-                # Commit the connection
-                user["final_connection"] = f"{target_node}_Shared_Pool"
-                user["shareability"] = 1.0  # Since 1 user takes exactly 1 RB, phi remains 1.0
-                user["b_in"] = a_in
-                
-                allocated = True
-                recovered_users += 1
-                break
+    allocated_loads = {node: 0 for node in active_nodes}
+    recovered_count = 0
+
+    # 2. Shareability & Offload Allocation Loop
+    for bs_idx, group_users in groups.items():
+        Ni_group_size = len(group_users)
         
-        # If all preferred nodes were completely full, the user is immediately dropped
-        if not allocated:
-            user["final_connection"] = "Dropped"
-            user["shareability"] = 0.0
-            dropped_users += 1
+        if Ni_group_size == 0:
+            continue
+            
+        for user in group_users:
+            best_node = None
+            best_b_in = -1.0
+            
+            for node_name in active_nodes:
+                if node_name in user: # If the physical link exists
+                    a_in = user[node_name]
+                    
+                    # Predict load to calculate dynamic shareability penalty
+                    proposed_load = allocated_loads[node_name] + 1
+                    phi = min(1.0, fixed_rb_value / proposed_load) 
+                    
+                    # Calculate Shared E2E Availability (b_in)
+                    b_in = a_in * phi 
+                    
+                    if b_in > best_b_in:
+                        best_b_in = b_in
+                        best_node = node_name
+            
+            # Tuning drop threshold set to 0.70 based on paper charts
+            if best_node is not None and best_b_in >= 0.70: 
+                allocated_loads[best_node] += 1
+                recovered_count += 1
+                if verbose:
+                    print(f"UE {user['ue_id']:<3} -> Assigned to {best_node} (Score: {best_b_in:.3f})")
+            else:
+                if verbose:
+                    print(f"UE {user['ue_id']:<3} -> DROPPED")
 
-    total_affected = len(affected_users)
-    resilience_percentage = (recovered_users / total_affected) * 100 if total_affected > 0 else 100
-
-    return resilience_percentage, backup_paths, affected_users
+    return recovered_count, allocated_loads

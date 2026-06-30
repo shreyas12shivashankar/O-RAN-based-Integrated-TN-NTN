@@ -1,7 +1,7 @@
 # Table I : Simulation parameters
 
 # Backhaul error probability 
-BACKHAUL_ERROR_PROB = 10e-6
+BACKHAUL_ERROR_PROB = 1e-6
 
 # Reliaility threshold
 RELIABILITY_THRESHOLD = 0.99999
