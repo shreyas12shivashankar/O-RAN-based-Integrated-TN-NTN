@@ -24,12 +24,44 @@ def draw_hexagon(ax, center, radius):
     z_hex = np.zeros(7) 
     ax.plot(x_hex, y_hex, z_hex, color='blue', linestyle='-', linewidth=1.5)
 
-def get_random_users(n=const.NUM_UE, area_range=const.AREA_RANGE):
-    # Uniformly distributes UEs in the service area.  
-    x = np.random.uniform(-area_range, area_range, n)
-    y = np.random.uniform(-area_range, area_range, n)
-    z = np.zeros(n) # Ground users
-    return np.vstack((x, y, z)).T   # Combines X, Y, Z arrays into  nx3 coordinate matrix
+# def get_random_users(n=const.NUM_UE, area_range=const.AREA_RANGE):
+#     # Uniformly distributes UEs in the service area.  
+#     x = np.random.uniform(-area_range, area_range, n)
+#     y = np.random.uniform(-area_range, area_range, n)
+#     z = np.zeros(n) # Ground users
+#     return np.vstack((x, y, z)).T   # Combines X, Y, Z arrays into  nx3 coordinate matrix
+
+def get_random_users(n=const.NUM_UE, bs_coords=None, radius=const.CELL_RADIUS, seed_val=None):
+    if seed_val is not None:
+        np.random.seed(seed_val)
+        
+    # Fallback if bs_coords isn't passed directly
+    if bs_coords is None:
+        bs_coords = get_hexagonal_bs(radius)
+        
+    num_cells = len(bs_coords)
+    users_per_cell = n // num_cells
+    remainder = n % num_cells
+    
+    ue_pos = []
+    
+    for i, bs in enumerate(bs_coords):
+        # Dump any remainder users into the center cell (GBS_0) so the total equals n exactly
+        cell_users = users_per_cell + (remainder if i == 0 else 0)
+        
+        # Use square root on the uniform distribution to prevent clustering at the direct center of the tower
+        r = radius * np.sqrt(np.random.uniform(0, 1, cell_users))
+        theta = np.random.uniform(0, 2 * np.pi, cell_users)
+        
+        # Convert polar back to cartesian and shift to the specific base station's center
+        x = bs[0] + r * np.cos(theta)
+        y = bs[1] + r * np.sin(theta)
+        z = np.zeros(cell_users)
+        
+        ue_pos.extend(np.vstack((x, y, z)).T)
+        
+    return np.array(ue_pos)
+
 
 def get_ntn_nodes():
     # Returns coordinates for HAP and LEO from constants.
@@ -42,7 +74,7 @@ if __name__ == "__main__":
     # Generate Data
     bs_coords = get_hexagonal_bs(radius=const.CELL_RADIUS)
     hap_coord, leo_coord = get_ntn_nodes()
-    ue_coords = get_random_users(n=const.NUM_UE, area_range=const.AREA_RANGE) 
+    ue_coords = get_random_users(n=const.NUM_UE, area_range=const.AREA_RANGE, radius=const.CELL_RADIUS) 
 
     # Plotting
     fig = plt.figure()
