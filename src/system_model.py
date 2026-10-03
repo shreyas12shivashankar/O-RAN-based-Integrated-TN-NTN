@@ -18,40 +18,40 @@ def distance_3D(pos_j, pos_n):
     """Euclidean 3D distance between RU j and UE n."""
     return np.linalg.norm(np.array(pos_j) - np.array(pos_n))
 
+
 def path_loss(d_jn, fc_ghz):
-    """Path loss in dB between Terrestrial RU j and UE n."""
-    return 28.0 + 22.0 * np.log10(max(d_jn, 1.0)) + 20.0 * np.log10(fc_ghz)
+    """Calculates 3GPP TR 38.901 Urban Macro (UMa) probabilistic path loss in dB."""
+    d = max(d_jn, 10.0)   # 3GPP valid range starts at 10 m
+    h_bs = 25.0           # BS height [m]
+    h_ue = 1.5            # UE height [m]
+
+    # LOS and NLOS probability
+    p_los = 1.0 if d <= 18.0 else (18.0 / d) + np.exp(-d / 63.0) * (1.0 - 18.0 / d)
+    p_nlos = 1.0 - p_los
+
+    # UMa LOS
+    pl_los = 28.0 + 22.0 * np.log10(d) + 20.0 * np.log10(fc_ghz)
+
+    # UMa NLOS 
+    pl_nlos_raw = (13.54 + 39.08 * np.log10(d)
+               + 20.0 * np.log10(fc_ghz)
+               - 0.6 * (h_ue - 1.5))
+    
+    pl_nlos = max(pl_los, pl_nlos_raw)
+    
+    # Apply the Probabilistic weighted formula
+    expected_pl = (p_los * pl_los) + (p_nlos * pl_nlos)
+
+    return expected_pl
+
 
 def free_space_path_loss(d_jn, fc_ghz):
     """Free space path loss in dB between NTN RU j and UE n."""
     return 32.45 + 20.0 * np.log10(max(d_jn, 1.0)) + 20.0 * np.log10(fc_ghz)
 
-# def get_rician_fading_and_pdf(k_db, seed_val=None):
-#     # Convert K from dB to linear scale
-#     k_lin = 10 ** (k_db / 10.0)
-    
-#     # Calculate LoS amplitude (rho) and scattered NLoS (sigma)
-#     rho = np.sqrt(k_lin / (k_lin + 1))
-#     sigma = np.sqrt(1 / (2 * (k_lin + 1)))
-    
-#     # Draw small scale fading magnitude |w_jn| directly using SciPy
-#     if seed_val is not None:
-#         rng = np.random.RandomState(seed_val)
-#         w_jn_mag = stats.rice.rvs(b= rho / sigma, scale=sigma, random_state=rng)
-#     else:
-#         w_jn_mag = stats.rice.rvs(b= rho / sigma, scale=sigma)
-        
-#     # Calculate exact PDF density (Eq 13)
-#     z = (w_jn_mag * rho) / (sigma**2)
-#     exponential_adjusted = np.exp(-((w_jn_mag - rho)**2) / (2 * sigma**2))
-#     bessel_scaled = sp.ive(0, z)
-#     pdf = (w_jn_mag / sigma**2) * exponential_adjusted * bessel_scaled
-    
-#     return w_jn_mag, pdf
-
 
 def compute_spatial_cholesky(ue_positions: np.ndarray, carrier_freq_ghz: float) -> np.ndarray:
-    """Computes the Eigenvalue Decomposition matrix 'L' ONCE for the user spatial distribution."""
+    """Computes spatial correlation matrix via Bessel function for given user coordinates."""   
     lambda_c = 3e8 / (carrier_freq_ghz * 1e9)
     diff = ue_positions[:, np.newaxis, :] - ue_positions[np.newaxis, :, :]
     dist_matrix = np.sqrt(np.sum(diff**2, axis=-1))
@@ -63,16 +63,18 @@ def compute_spatial_cholesky(ue_positions: np.ndarray, carrier_freq_ghz: float) 
     return vecs @ np.diag(np.sqrt(vals))
 
 def apply_rician_fading(L: np.ndarray, k_factor_db: float, seed: int = None) -> np.ndarray:
-    """Applies random variables to the pre-computed spatial matrix 'L'."""
-    rng = np.random.default_rng(seed)
-    n_users = L.shape[0]
+    """Applies spatially correlated Rician small-scale fading."""
     
+    if seed is not None:
+        np.random.seed(seed)
+        
+    n_users = L.shape[0]
     k_lin = 10.0 ** (k_factor_db / 10.0)
     rho = math.sqrt(k_lin / (k_lin + 1.0))      
     sigma = math.sqrt(1.0 / (2.0 * (k_lin + 1.0))) 
     
-    z_real = rng.standard_normal(n_users)
-    z_imag = rng.standard_normal(n_users)
+    z_real = np.random.standard_normal(n_users)
+    z_imag = np.random.standard_normal(n_users)
     
     x_corr = L @ z_real
     y_corr = L @ z_imag
@@ -82,8 +84,9 @@ def apply_rician_fading(L: np.ndarray, k_factor_db: float, seed: int = None) -> 
     
     return w_real**2 + w_imag**2
 
+
 def gbs_3d_antenna_gain_db(ue_pos, bs_pos, h_gbs=25.0, h_ue=1.5, n_elements=8, tilt_deg=93.0, g_e_max_dbi=8.0, active_sector_deg=None):
-    """Computes 3D antenna gain using standard math module for massive loop speedup."""
+    """Computes 3D directional antenna radiation pattern gain (dBi) for GBS sectors."""
     dx = ue_pos[0] - bs_pos[0]
     dy = ue_pos[1] - bs_pos[1]
     
@@ -129,8 +132,7 @@ def channel_coefficient(antenna_gain_db, path_loss_db, w_sq):
     """
     g_jn_linear = 10.0 ** (antenna_gain_db / 10.0)
     path_loss_linear = 10.0 ** (path_loss_db / 10.0)
-    h_sq = (g_jn_linear / path_loss_linear) * w_sq
-    return h_sq
+    return (g_jn_linear / path_loss_linear) * w_sq
 
 def sinr(p_jn, h_sq, interference_power, noise_density, bandwidth):
     """Computes SINR at UE n from RU j."""

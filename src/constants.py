@@ -48,20 +48,7 @@ NUM_GBS = 7           # Number of ground base stations
 CELL_RADIUS = 700     # Calculated to cover entire 10 sq.km ground area
 AREA_RANGE = 1550    
 NUM_UE = 100
-MAX_ATTACH_DIST = 1200.0
 
 ALTITUDE_HAP = 20000    # 20 Km
 ALTITUDE_LEO = 110000   # 110 Km
 
-# Frequency reuse factor across 7 GBSs
-FREQUENCY_REUSE = 1    # Set to 1 for FR-1 (Full interference), 3 for FR-3 (Clustered)
-
-FR3_CLUSTER_MAP = {
-    'GBS_0': 'F_A',  
-    'GBS_1': 'F_B',
-    'GBS_2': 'F_C',
-    'GBS_3': 'F_B',
-    'GBS_4': 'F_C',
-    'GBS_5': 'F_B',
-    'GBS_6': 'F_C',
-}

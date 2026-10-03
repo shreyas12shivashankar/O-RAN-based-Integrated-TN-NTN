@@ -2,13 +2,12 @@ import numpy as np
 import math
 from src.system_model import (
     distance_3D, path_loss, free_space_path_loss, channel_coefficient,
-    gbs_3d_antenna_gain_db, GAIN_HAP_DBI, GAIN_LEO_DBI,
-    K_UMA_DB_MEAN, K_HAP_STATIC, K_LEO_STATIC
+    gbs_3d_antenna_gain_db, GAIN_HAP_DBI, GAIN_LEO_DBI
 )
 import src.constants as const
 
 def get_active_sector(bs_pos, ue_pos):
-    """Determines the GBS sector panel pointing closest to the UE."""
+    """Identifies the GBS sector panel closest in azimuth angle to the UE."""
     dx = ue_pos[0] - bs_pos[0]
     dy = ue_pos[1] - bs_pos[1]
     azimuth_deg = math.degrees(math.atan2(dy, dx)) % 360.0
@@ -17,10 +16,8 @@ def get_active_sector(bs_pos, ue_pos):
     def angular_difference(angle1, angle2):
         return abs((angle1 - angle2 + 180.0) % 360.0 - 180.0)
 
-    active_sector = min(
-        sectors_pool,
-        key=lambda sector: angular_difference(azimuth_deg, sector)
-    )
+    active_sector = min(sectors_pool,key=lambda sector: angular_difference(azimuth_deg, sector))
+    
     return active_sector
 
 def get_all_link_budgets(ue_pos, bs_coords, hap_coord, leo_coord, ue_idx=0, w_sq_gbs=None, w_sq_hap=1.0, w_sq_leo=1.0):
@@ -49,7 +46,7 @@ def get_all_link_budgets(ue_pos, bs_coords, hap_coord, leo_coord, ue_idx=0, w_sq
         'gain_dbi': GAIN_LEO_DBI, 'w_sq': w_sq_leo
     })
 
-    # 2. Terrestrial Links (GBS) with Sectorization (r=1, s=3)
+    # 2. Terrestrial Links (3-sector GBS) 
     gbs_sector_powers = [] 
     sectors_pool = [30.0, 150.0, 270.0]
     
@@ -77,7 +74,6 @@ def get_all_link_budgets(ue_pos, bs_coords, hap_coord, leo_coord, ue_idx=0, w_sq
                 best_rx = rx_w
                 
         gbs_sector_powers.append(sector_rx_dict)
-        
         links.append({
             'name': f'GBS_{i}', 
             'rx_w': best_rx,       
